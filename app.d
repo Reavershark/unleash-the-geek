@@ -137,6 +137,8 @@ class Game
     
     int turn = 0;
     
+    Coord[] radars;
+    
     void readInit()
     {
         auto dimentions = readln.split.to!(int[]);
@@ -159,7 +161,8 @@ class Game
             auto input = readln.split;
             foreach (x; 0..width) {
                 if (input[2*x] != "?")
-                    ores ~= Ore(x, y, input[2*x].to!int);
+                    if (input[2*x].to!int > 0)
+                        ores ~= Ore(x, y, input[2*x].to!int);
                 if (input[2*x+1] == "1")
                     holes ~= Coord(x, y);
             }
@@ -221,7 +224,7 @@ class Game
             {
                 e.move(Coord(0, e.pos.y));
             }
-            if (e.id == 0) // Robot 0 places radars
+            if (ores.length < 40 && (e.id == 0 || e.id == 5)) // Robot 0 places radars
             {
                 if (e.item != Item.radar) // Restock on radar
                 {
@@ -241,16 +244,13 @@ class Game
                 {
                     Coord radar = e.target;
                     e.dig();
+                    radars ~= e.pos;
                     e.target = Coord();
                 }
             }
             else if (e.item != Item.ore)
             {
-                if (ores.length == 0)
-                {
-                    e.wait();
-                }
-                else if (e.target == Coord())
+                if (e.target == Coord())
                 {
                     e.target = nextOre(e.pos).pos;
                     e.move();
@@ -276,18 +276,24 @@ class Game
     Coord nextRadar(Coord pos) // Argument not yet used
     {
 
-        if (ores.length > 0)
+        if (radars.length > 0)
         {
             Coord c;
             foreach(i; 0..450)
             {
                 c = Coord.random(Coord(width, height));
-                foreach(ore; ores)
+                bool ideal = true;
+                foreach(radar; radars)
                 {
-                    auto dist = c.distance(ore.pos);
-                    if ( dist > 4 )
-                        return c;
+                    auto dist = c.distance(radar);
+                    if ( dist < 4 )
+                    {
+                        ideal = false;
+                        break;
+                    }
                 }
+                if (ideal)
+                        return c;
             }
             return c;
         } else {
