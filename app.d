@@ -10,11 +10,11 @@ struct Coord
         return cast(int)sqrt(cast(float)(this.x-target.x)^^2 + (this.y-target.y)^^2);
     }
     
-    static Coord random(Coord grid)
+    static Coord random(Coord min, Coord max)
     {
         return Coord(
-            uniform(0, grid.x, rndGen),
-            uniform(0, grid.y, rndGen)
+            uniform(min.x, max.x, rndGen),
+            uniform(min.y, max.y, rndGen)
         );
     }
 }
@@ -224,7 +224,7 @@ class Game
             {
                 e.move(Coord(0, e.pos.y));
             }
-            if (ores.length < 40 && (e.id == 0 || e.id == 5)) // Robot 0 places radars
+            if (radars.length < 8 && (e.id == 0 || e.id == 5)) // Robot 0 places radars
             {
                 if (e.item != Item.radar) // Restock on radar
                 {
@@ -250,13 +250,14 @@ class Game
             }
             else if (e.item != Item.ore)
             {
-                if (e.target == Coord())
+                if (e.target == Coord() || !ores.any!(x => x.pos == e.target))
                 {
                     e.target = nextOre(e.pos).pos;
                     e.move();
                 }
                 else if (e.pos != e.target)
                 {
+                    
                     e.move();
                 }
                 else if (e.pos == e.target)
@@ -279,22 +280,26 @@ class Game
         if (radars.length > 0)
         {
             Coord c;
-            foreach(i; 0..450)
+            foreach(y; 3..height-3)
             {
-                c = Coord.random(Coord(width, height));
-                bool ideal = true;
-                foreach(radar; radars)
+                foreach(x; 3..width-3)
                 {
-                    auto dist = c.distance(radar);
-                    if ( dist < 4 )
+                    c = Coord(x, y);
+                    bool ideal = true;
+                    foreach(radar; radars)
                     {
-                        ideal = false;
-                        break;
+                        auto dist = c.distance(radar);
+                        if ( dist < 6 )
+                        {
+                            ideal = false;
+                            break;
+                        }
                     }
+                    if (ideal)
+                            return c;
                 }
-                if (ideal)
-                        return c;
             }
+            stderr.writeln("Random radar location");
             return c;
         } else {
             return Coord(width/4, height/2);
@@ -319,7 +324,7 @@ class Game
             stderr.writeln(destination);
             return destination;
         } else {
-            return Ore(width/4, height/2, 0);
+            return Ore(width/3, height/2, 0);
         }
     }
 }
