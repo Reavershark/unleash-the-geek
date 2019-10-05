@@ -255,7 +255,7 @@ class Game
             }
             else if (e.item != Item.ore)
             {
-                if (e.target == Coord() || isTrap(e.pos) || !ores.any!(x => x.pos == e.target))
+                if (e.target == Coord() || isDanger(e.pos) || !ores.any!(x => x.pos == e.target))
                 {
                     e.target = nextOre(e.pos).pos;
                     e.move();
@@ -292,7 +292,7 @@ class Game
                 {
                     c = Coord(x, y);
                     bool ideal = true;
-                    if (!isTrap(c))
+                    if (!isDanger(c))
                     {
                         foreach(radar; radars)
                         {
@@ -323,7 +323,7 @@ class Game
             foreach(ore; ores)
             {
                 int dist = pos.distance(ore.pos);
-                if ( dist < result && ore.amount > 0 && !isTrap(ore.pos))
+                if ( dist < result && ore.amount > 0 && !isDanger(ore.pos))
                 {
                     destination = ore;
                     result = dist;
@@ -334,6 +334,24 @@ class Game
         } else {
             return Ore(width/3, height/2, 0);
         }
+    }
+    
+    bool isDanger(Coord c)
+    {
+        if(isTrap(c))
+            return true;
+
+        int nearbyTraps = 0;
+        foreach(trap; traps)
+                if (c.distance(trap) < 2)
+                    nearbyTraps++;
+
+        if (nearbyTraps > 0)                    
+            foreach(e; entities.filter!(x => x.type == EntityType.enemy))
+                if (c.distance(e.pos) < 2)
+                    return true;
+
+        return false;
     }
     
     bool isTrap(Coord c)
