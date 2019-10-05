@@ -138,6 +138,7 @@ class Game
     int turn = 0;
     
     Coord[] radars;
+    Coord[] traps;
     
     void readInit()
     {
@@ -219,12 +220,11 @@ class Game
                 e.target = lastEntity.target;
             }
             
-            
             if (e.item == Item.ore) // Always deliver ore
             {
                 e.move(Coord(0, e.pos.y));
             }
-            if (radars.length < 8 && (e.id == 0 || e.id == 5)) // Robot 0 places radars
+            else if (radars.length < 7 && (e.id == 0 || e.id == 5)) // Robot 0 places radars
             {
                 if (e.item != Item.radar) // Restock on radar
                 {
@@ -233,7 +233,7 @@ class Game
                 }
                 else if (e.target == Coord()) // Target is not set
                 {
-                    e.target = nextRadar(e.pos);
+                    e.target = nextRadar();
                     e.move();
                 }
                 else if (e.target != e.pos)
@@ -242,26 +242,32 @@ class Game
                 }
                 else
                 {
-                    Coord radar = e.target;
+                    if (e.item == Item.trap)
+                        traps ~= e.pos;
                     e.dig();
                     radars ~= e.pos;
                     e.target = Coord();
                 }
             }
+            else if (e.pos.x == 0 && trapCooldown == 0)
+            {
+                e.request(ItemRequest.trap);
+            }
             else if (e.item != Item.ore)
             {
-                if (e.target == Coord() || !ores.any!(x => x.pos == e.target))
+                if (e.target == Coord() || isTrap(e.pos) || !ores.any!(x => x.pos == e.target))
                 {
                     e.target = nextOre(e.pos).pos;
                     e.move();
                 }
                 else if (e.pos != e.target)
                 {
-                    
                     e.move();
                 }
                 else if (e.pos == e.target)
                 {
+                    if (e.item == Item.trap)
+                        traps ~= e.pos;
                     e.dig();
                     e.target = Coord();
                 }
@@ -274,32 +280,34 @@ class Game
         turn++;
     }
     
-    Coord nextRadar(Coord pos) // Argument not yet used
+    Coord nextRadar()
     {
 
         if (radars.length > 0)
         {
             Coord c;
-            foreach(y; 3..height-3)
+            foreach(x; 3..width-3)
             {
-                foreach(x; 3..width-3)
+                foreach(y; 3..height-3)
                 {
                     c = Coord(x, y);
                     bool ideal = true;
-                    foreach(radar; radars)
+                    if (!isTrap(c))
                     {
-                        auto dist = c.distance(radar);
-                        if ( dist < 6 )
+                        foreach(radar; radars)
                         {
-                            ideal = false;
-                            break;
+                            auto dist = c.distance(radar);
+                            if ( dist < 6 )
+                            {
+                                ideal = false;
+                                break;
+                            }
                         }
-                    }
-                    if (ideal)
+                        if (ideal)
                             return c;
+                    }
                 }
             }
-            stderr.writeln("Random radar location");
             return c;
         } else {
             return Coord(width/4, height/2);
@@ -315,7 +323,7 @@ class Game
             foreach(ore; ores)
             {
                 int dist = pos.distance(ore.pos);
-                if ( dist < result && ore.amount > 0)
+                if ( dist < result && ore.amount > 0 && !isTrap(ore.pos))
                 {
                     destination = ore;
                     result = dist;
@@ -326,6 +334,11 @@ class Game
         } else {
             return Ore(width/3, height/2, 0);
         }
+    }
+    
+    bool isTrap(Coord c)
+    {
+        return traps.any!(x => x == c);
     }
 }
 
