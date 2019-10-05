@@ -2,14 +2,28 @@ import std;
 
 struct Coord
 {
-    int x, y;
+    int x = -1;
+    int y = -1;
+    
+    int distance(Coord target)
+    {
+        return cast(int)sqrt(cast(float)(this.x-target.x)^^2 + (this.y-target.y)^^2);
+    }
+    
+    static Coord random(Coord grid)
+    {
+        return Coord(
+            uniform(0, grid.x, rndGen),
+            uniform(0, grid.y, rndGen)
+        );
+    }
 }
 
 struct Ore
 {
     Coord pos;
     int amount = 0;
-
+    
     this(int x, int y, int amount)
     {
         this.pos = Coord(x, y);
@@ -33,13 +47,21 @@ enum Item
     ore = 4
 }
 
+enum ItemRequest
+{
+    radar = "RADAR",
+    trap = "TRAP"
+}
+
 struct Entity
 {
     int id; // unique id of the entity
     EntityType type; // 0 for your robot, 1 for other robot, 2 for radar, 3 for trap
     Coord pos; // position of the entity
     Item item; // if this entity is a robot, the item it is carrying (-1 for NONE, 2 for RADAR, 3 for TRAP, 4 for ORE)
-
+    bool moved = false; // Has already written to stdout
+    Coord target = Coord(); // Current target tile
+    
     this(int id, int type, int x, int y, int item)
     {
         this.id = id;
@@ -47,39 +69,88 @@ struct Entity
         this.pos = Coord(x, y);
         this.item = cast(Item) item;
     }
+    
+    void move()
+    {
+        move(this.target); // Can be null
+    }
+    
+    void move(Coord pos)
+    {
+        if (!moved)
+        {
+            writeln("MOVE ", pos.x, " ", pos.y);
+            moved = true;
+        }
+    }
+    
+    void dig()
+    {
+        dig(this.pos);
+    }
+    
+    void dig(Coord pos)
+    {
+        if (!moved)
+        {
+            writeln("DIG ", pos.x, " ", pos.y);
+            moved = true;
+        }
+    }
+    
+    void request(ItemRequest item)
+    {
+        if (!moved )
+        {
+            writeln("REQUEST ", item);
+            moved = true;
+        }
+    }
+    
+    void wait()
+    {
+        if (!moved)
+        {
+            writeln("WAIT");
+            moved = true;
+        }
+    }
 }
 
 class Game
 {
     int width;
     int height;
-
+    
     int myScore;
     int opponentScore;
-
+    
     Ore[] ores;
     Coord[] holes;
-
+    
     int visibleEntities;
     int radarCooldown;
     int trapCooldown;
-
+    
     Entity[] entities;
-
+    Entity[] lastEntities;
+    
+    int turn = 0;
+    
     void readInit()
     {
         auto dimentions = readln.split.to!(int[]);
         width = dimentions[0];
         height = dimentions[1];
     }
-
+    
     void readScore()
     {
         auto scores = readln.split.to!(int[]);
         myScore = scores[0].to!int;
         opponentScore = scores[1].to!int;
     }
-
+    
     void readGrid()
     {
         ores = null;
@@ -94,7 +165,7 @@ class Game
             }
         }
     }
-
+    
     void readStats()
     {
         auto stats = readln.split.to!(int[]);
@@ -102,9 +173,10 @@ class Game
         radarCooldown = stats[1];
         trapCooldown = stats[2];
     }
-
+    
     void readEntities()
     {
+        lastEntities = entities.dup;
         entities = null;
         foreach (i; 0..visibleEntities) {
             auto entity = readln.split.to!(int[]);
@@ -116,12 +188,12 @@ class Game
             entities ~= Entity(id, type, x, y, item);
         }
     }
-
+    
     this()
     {
         readInit();
     }
-
+    
     public void startTurn()
     {
         readScore();
@@ -131,36 +203,117 @@ class Game
         stderr.writeln(ores);
         stderr.writeln(holes);
     }
-
+    
     public void move()
     {
-        foreach(i, e; entities.filter!(e => e.type == EntityType.player).array)
+        foreach(ref e; entities.filter!(e => e.type == EntityType.player))
         {
             stderr.writeln(e);
-
-            if (e.item == Item.ore)
+            
+            if (turn > 0)
             {
-                writeln("MOVE ", 0, " ", e.pos.y);
+                Entity lastEntity = lastEntities.filter!(x => x.id == e.id).array[0];
+                e.target = lastEntity.target;
             }
-            else if (e.id == 2 && e.item != Item.radar)
+            
+            
+            if (e.item == Item.ore) // Always deliver ore
             {
-                writeln("REQUEST RADAR");
+                e.move(Coord(0, e.pos.y));
+            }
+            if (e.id == 0) // Robot 0 places radars
+            {
+                if (e.item != Item.radar) // Restock on radar
+                {
+                    // TODO: Check cooldown
+                    e.request(ItemRequest.radar);
+                }
+                else if (e.target == Coord()) // Target is not set
+                {
+                    e.target = nextRadar(e.pos);
+                    e.move();
+                }
+                else if (e.target != e.pos)
+                {
+                    e.move();
+                }
+                else
+                {
+                    Coord radar = e.target;
+                    e.dig();
+                    e.target = Coord();
+                }
             }
             else if (e.item != Item.ore)
             {
+                if (ores.length == 0)
+                {
+                    e.wait();
+                }
+                else if (e.target == Coord())
+                {
+                    e.target = nextOre(e.pos).pos;
+                    e.move();
+                }
+                else if (e.pos != e.target)
+                {
+                    e.move();
+                }
+                else if (e.pos == e.target)
+                {
+                    e.dig();
+                    e.target = Coord();
+                }
+            }
+        }
+    }
+    
+    public void endTurn()
+    {
+        turn++;
+    }
+    
+    Coord nextRadar(Coord pos) // Argument not yet used
+    {
+
+        if (ores.length > 0)
+        {
+            Coord c;
+            foreach(i; 0..450)
+            {
+                c = Coord.random(Coord(width, height));
                 foreach(ore; ores)
                 {
-                    if (false && ore.pos == e.pos)
-                    {
-                        writeln("DIG ", e.pos.x, " ", e.pos.y);
-                        break;
-                    }
+                    auto dist = c.distance(ore.pos);
+                    if ( dist > 4 )
+                        return c;
                 }
-                if (uniform(0, 5, rndGen) == 0)
-                    writeln("DIG ", e.pos.x, " ", e.pos.y);
-                else
-                    writeln("MOVE ", e.pos.x + 2, " ", e.pos.y);
             }
+            return c;
+        } else {
+            return Coord(width/4, height/2);
+        }
+    }
+    
+    Ore nextOre(Coord pos)
+    {
+        if (ores.length > 0)
+        {
+            Ore destination;
+            int result = int.max;
+            foreach(ore; ores)
+            {
+                int dist = pos.distance(ore.pos);
+                if ( dist < result && ore.amount > 0)
+                {
+                    destination = ore;
+                    result = dist;
+                }
+            }
+            stderr.writeln(destination);
+            return destination;
+        } else {
+            return Ore(width/4, height/2, 0);
         }
     }
 }
@@ -168,9 +321,10 @@ class Game
 void main()
 {
     Game game = new Game();
-
+    
     while (1) {
         game.startTurn();
         game.move();
+        game.endTurn();
     }
 }
