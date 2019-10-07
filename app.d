@@ -19,15 +19,25 @@ struct Coord
     }
 }
 
-struct Ore
+enum TileType
 {
-    Coord pos;
-    int amount = 0;
+    empty,
+    radar,
+    trap,
+    safeHole,
+    enemyHole
+}
+
+struct Tile
+{
+    TileType type;
+    int oreAmount;
+    bool targeted = false;
     
-    this(int x, int y, int amount)
+    this(TileType type, int oreAmount = 0)
     {
-        this.pos = Coord(x, y);
-        this.amount = amount;
+        this.type = type;
+        this.oreAmount = oreAmount;
     }
 }
 
@@ -75,18 +85,26 @@ struct Entity
         move(this.target); // Can be null
     }
     
-    void move(Coord pos)
+    void move(Coord c)
     {
         if (!moved)
         {
-            writeln("MOVE ", pos.x, " ", pos.y);
+            writeln("MOVE ", c.x, " ", c.y);
             moved = true;
         }
     }
     
+    bool canDig()
+    {
+        if (pos.distance(target) <= 1)
+            return true;
+        else
+            return false;
+    }
+    
     void dig()
     {
-        dig(this.pos);
+        dig(this.target);
     }
     
     void dig(Coord pos)
@@ -100,7 +118,7 @@ struct Entity
     
     void request(ItemRequest item)
     {
-        if (!moved )
+        if (!moved)
         {
             writeln("REQUEST ", item);
             moved = true;
@@ -117,148 +135,230 @@ struct Entity
     }
 }
 
-class Game
+struct Board
 {
-    int width;
-    int height;
-    
+    Coord dimensions;
+
     int myScore;
     int opponentScore;
     
-    Ore[] ores;
-    Coord[] holes;
+    Tile[Coord] tiles;
     
     int visibleEntities;
     int radarCooldown;
     int trapCooldown;
     
-    Entity[] entities;
-    Entity[] lastEntities;
+    Entity[int] entities;
     
-    int turn = 0;
-    
-    Coord[] radars;
-    Coord[] traps;
-    
-    void readInit()
+    this(Coord dimensions)
     {
-        auto dimentions = readln.split.to!(int[]);
-        width = dimentions[0];
-        height = dimentions[1];
+        this.dimensions = dimensions;
     }
     
-    void readScore()
+    int countAvailableOres()
+    {
+        int totalOre = 0;
+        foreach(tile; tiles)
+        {
+            if (tile.oreAmount > 0 && !tile.targeted)
+                totalOre++;
+        }
+        return totalOre;
+    }
+    
+    int countOres()
+    {
+        int totalOre = 0;
+        foreach(tile; tiles)
+        {
+            totalOre += tile.oreAmount;
+            //if (tile.targeted)
+            //    totalOre = max(totalOre - 1, 0);
+        }
+        return totalOre;
+    }
+    
+    int countRadars()
+    {
+        return tiles.byValue()
+            .count!(a => a.type == TileType.radar)
+            .to!int;
+    }
+}
+
+class BoardParser
+{
+    static void readScore(ref Board board)
     {
         auto scores = readln.split.to!(int[]);
-        myScore = scores[0].to!int;
-        opponentScore = scores[1].to!int;
+        board.myScore = scores[0].to!int;
+        board.opponentScore = scores[1].to!int;
     }
     
-    void readGrid()
+    static void readGrid(ref Board board)
     {
-        ores = null;
-        holes = null;
-        foreach (y; 0..height) {
+        foreach (y; 0..board.dimensions.y) {
             auto input = readln.split;
-            foreach (x; 0..width) {
+            foreach (x; 0..board.dimensions.x) {
+                Coord c = Coord(x, y);
+                
+                // Ores
                 if (input[2*x] != "?")
                     if (input[2*x].to!int > 0)
-                        ores ~= Ore(x, y, input[2*x].to!int);
+                        board.tiles[c].oreAmount = input[2*x].to!int;
+                       
+                // Holes 
                 if (input[2*x+1] == "1")
-                    holes ~= Coord(x, y);
+                    if(board.tiles[c].type == TileType.empty)
+                        board.tiles[c].type = TileType.enemyHole;
             }
         }
     }
     
-    void readStats()
+    static void readStats(ref Board board)
     {
         auto stats = readln.split.to!(int[]);
-        visibleEntities = stats[0];
-        radarCooldown = stats[1];
-        trapCooldown = stats[2];
+        board.visibleEntities = stats[0];
+        board.radarCooldown = stats[1];
+        board.trapCooldown = stats[2];
     }
     
-    void readEntities()
+    static void readEntities(ref Board board)
     {
-        lastEntities = entities.dup;
-        entities = null;
-        foreach (i; 0..visibleEntities) {
+        auto lastEntities = board.entities;
+        board.entities = null;
+        foreach (i; 0..board.visibleEntities) {
             auto entity = readln.split.to!(int[]);
             int id = entity[0];
             int type = entity[1];
             int x = entity[2];
             int y = entity[3];
             int item = entity[4];
-            entities ~= Entity(id, type, x, y, item);
+            board.entities[id] = Entity(id, type, x, y, item);
+            if (id in lastEntities)
+                board.entities[id].target = lastEntities[id].target;
         }
     }
+}
+
+class Game
+{
+    Board board;
+    Board lastBoard;
     
+    Coord dimensions;
+    
+    int turn = 0;
+    
+    void readInit()
+    {
+        auto input = readln.split.to!(int[]);
+        dimensions = Coord(input[0], input[1]);
+    }
+    
+    void boardInit()
+    {
+        board = Board(dimensions);
+        foreach (y; 0..board.dimensions.y)
+            foreach (x; 0..board.dimensions.x)
+            {
+                Coord c = Coord(x, y);
+                board.tiles[c] = Tile(TileType.empty);
+            }
+    }
+        
     this()
     {
         readInit();
+        boardInit();
     }
     
     public void startTurn()
     {
-        readScore();
-        readGrid();
-        readStats();
-        readEntities();
-        stderr.writeln(ores);
-        stderr.writeln(holes);
+        lastBoard = board;
+        
+        BoardParser.readScore(board);
+        BoardParser.readGrid(board);
+        BoardParser.readStats(board);
+        BoardParser.readEntities(board);
     }
     
     public void move()
     {
-        foreach(ref e; entities.filter!(e => e.type == EntityType.player))
+        auto playerRobots =
+            board.entities
+            .byPair
+            .filter!(a => a.value.type == EntityType.player)
+            .assocArray;
+
+        foreach(id; playerRobots.keys.sort)
         {
-            stderr.writeln(e);
+            Entity* e = &board.entities[id];
+            stderr.writeln(*e);
             
-            if (turn > 0)
+            if (e.pos == Coord(-1, -1)) // ded
             {
-                Entity lastEntity = lastEntities.filter!(x => x.id == e.id).array[0];
-                e.target = lastEntity.target;
+                e.wait();
+                continue;
             }
+            
+            Tile* currTile = &board.tiles[e.pos];
+            
+            bool radarCondition =
+                (board.countOres() < 12 && (e.id == 0 || e.id == 5));
+                //|| (board.countOres() < 8 && (e.id == 4 || e.id == 9));
             
             if (e.item == Item.ore) // Always deliver ore
             {
                 e.move(Coord(0, e.pos.y));
             }
-            else if (radars.length < 7 && (e.id == 0 || e.id == 5)) // Robot 0 places radars
+            else if (radarCondition) // Radar
             {
                 if (e.item != Item.radar) // Restock on radar
                 {
                     // TODO: Check cooldown
                     e.request(ItemRequest.radar);
                 }
-                else if (e.target == Coord()) // Target is not set
+                else if (e.target == Coord() || isDanger(e.target)) // Target is not set
                 {
-                    e.target = nextRadar();
+                    Coord target = nextRadar(e.pos);
+                    board.tiles[target].targeted = true;
+                    e.target = target;
                     e.move();
                 }
-                else if (e.target != e.pos)
-                {
-                    e.move();
-                }
-                else
+                else if (e.canDig())
                 {
                     if (e.item == Item.trap)
-                        traps ~= e.pos;
+                        currTile.type = TileType.trap;
+                    else if (e.item == Item.radar)
+                        currTile.type = TileType.radar;
+                    else
+                        currTile.type = TileType.safeHole;
+                    
                     e.dig();
-                    radars ~= e.pos;
+                    currTile.targeted = false;
                     e.target = Coord();
+                }                
+                else
+                {
+                    e.move();
                 }
-            }
-            else if (e.pos.x == 0 && trapCooldown == 0)
-            {
-                e.request(ItemRequest.trap);
             }
             else if (e.item != Item.ore)
             {
-                if (e.target == Coord() || isDanger(e.pos) || !ores.any!(x => x.pos == e.target))
+                if (board.countOres() == 0)
                 {
-                    e.target = nextOre(e.pos).pos;
-                    e.move();
+                    e.target = nextRadar(e.pos);
+                    e.dig();
+                }
+                else if (e.target == Coord() || isDanger(e.target) || board.tiles[e.target].oreAmount == 0)
+                {
+                    e.target = nextOre(e.pos);
+                    board.tiles[e.target].targeted = true;
+                    if (e.pos.x == 0 && board.trapCooldown == 0 && e.id != 0)
+                        e.request(ItemRequest.trap);
+                    else
+                        e.move();
                 }
                 else if (e.pos != e.target)
                 {
@@ -267,9 +367,16 @@ class Game
                 else if (e.pos == e.target)
                 {
                     if (e.item == Item.trap)
-                        traps ~= e.pos;
+                        currTile.type = TileType.trap;
+                    else if (e.item == Item.radar)
+                        currTile.type = TileType.radar;
+                    else
+                        currTile.type = TileType.safeHole;
+                        
                     e.dig();
+                    board.tiles[e.target].oreAmount = max(board.tiles[e.target].oreAmount - 1, 0);
                     e.target = Coord();
+                    currTile.targeted = false;
                 }
             }
         }
@@ -280,27 +387,33 @@ class Game
         turn++;
     }
     
-    Coord nextRadar()
+    Coord nextRadar(Coord pos)
     {
-
-        if (radars.length > 0)
+        if (board.countRadars() > 0)
         {
             Coord c;
-            foreach(x; 3..width-3)
+            Coord goodEnough;
+            Tile[Coord] radars = board.tiles.byPair.filter!(a => a.value.type == TileType.radar).assocArray;
+            foreach(x; 4..board.dimensions.x-3)
             {
-                foreach(y; 3..height-3)
+                foreach(y; 3..board.dimensions.y-3)
                 {
                     c = Coord(x, y);
                     bool ideal = true;
-                    if (!isDanger(c))
+                    if (!isDanger(c) && !board.tiles[c].targeted)
                     {
-                        foreach(radar; radars)
+                        foreach(radarPos, radar; radars)
                         {
-                            auto dist = c.distance(radar);
-                            if ( dist < 6 )
+                            auto dist = c.distance(radarPos);
+                            if (dist < 6)
                             {
-                                ideal = false;
-                                break;
+                                if(!isDanger(c))
+                                {
+                                    ideal = false;
+                                    break;
+                                }
+                                else
+                                    goodEnough = c;
                             }
                         }
                         if (ideal)
@@ -310,53 +423,73 @@ class Game
             }
             return c;
         } else {
-            return Coord(width/4, height/2);
+            return Coord.random(
+                Coord(3, max(pos.y-1, 0)),
+                Coord(5, min(pos.y+1, board.dimensions.y))
+            );
         }
     }
     
-    Ore nextOre(Coord pos)
+    Coord nextOre(Coord pos)
     {
-        if (ores.length > 0)
+        if (board.countAvailableOres() > 0)
         {
-            Ore destination;
+            Coord destination = Coord();
+            Coord goodEnough = Coord();
             int result = int.max;
-            foreach(ore; ores)
+            Tile[Coord] ores = board.tiles.byPair.filter!(a => a.value.oreAmount > 0).assocArray;
+            foreach(orePos, ore; ores)
             {
-                int dist = pos.distance(ore.pos);
-                if ( dist < result && ore.amount > 0 && !isDanger(ore.pos))
+                int dist = pos.distance(orePos);
+                if (dist < result)
                 {
-                    destination = ore;
-                    result = dist;
+                    if (!isDanger(orePos) && !board.tiles[orePos].targeted)
+                    {
+                        destination = orePos;
+                        result = dist;
+                    }
+                    if (goodEnough == Coord())
+                        goodEnough = orePos;
                 }
             }
-            stderr.writeln(destination);
+            if (destination == Coord())
+            {
+                stderr.writeln("No valid ore found");
+                return goodEnough;
+            }
             return destination;
         } else {
-            return Ore(width/3, height/2, 0);
+            return Coord.random(
+                Coord(0, 0),
+                Coord(board.dimensions.x/4, board.dimensions.y)
+            );
         }
     }
     
     bool isDanger(Coord c)
     {
-        if(isTrap(c))
+        if(isTrap(board.tiles[c]))
             return true;
 
         int nearbyTraps = 0;
-        foreach(trap; traps)
-                if (c.distance(trap) < 2)
+        foreach(trapPos, trap; board.tiles.byPair.filter!(x => x.value.type == TileType.trap).assocArray)
+                if (c.distance(trapPos) < 2)
                     nearbyTraps++;
 
         if (nearbyTraps > 0)                    
-            foreach(e; entities.filter!(x => x.type == EntityType.enemy))
+            foreach(e; board.entities.byValue.filter!(x => x.type == EntityType.enemy))
                 if (c.distance(e.pos) < 2)
                     return true;
 
         return false;
     }
     
-    bool isTrap(Coord c)
+    bool isTrap(Tile t)
     {
-        return traps.any!(x => x == c);
+        if (t.type == TileType.trap || t.type == TileType.enemyHole)
+            return true;
+        else
+            return false;
     }
 }
 
